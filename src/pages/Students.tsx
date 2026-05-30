@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { UserPlus, Search, Pencil, Trash2, X, Users } from 'lucide-react';
-import { supabase, type Student, type Class } from '../lib/supabase';
+import { api, type Student, type Class } from '../lib/supabase';
 import { Badge, LoadingSpinner, EmptyState, SectionCard } from '../components/ui';
+
+type ApiResponse = { success: boolean; data: any };
 
 export default function Students() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -21,12 +23,14 @@ export default function Students() {
 
   async function fetchAll() {
     setLoading(true);
-    const [sRes, cRes] = await Promise.all([
-      supabase.from('students').select('*, classes(name)').order('name'),
-      supabase.from('classes').select('*').order('grade'),
-    ]);
-    setStudents((sRes.data || []) as unknown as Student[]);
-    setClasses((cRes.data || []) as Class[]);
+    try {
+      const [sRes, cRes] = await Promise.all([
+        api.get<ApiResponse>('/students'),
+        api.get<ApiResponse>('/classes'),
+      ]);
+      setStudents(sRes.data || []);
+      setClasses(cRes.data || []);
+    } catch (e) { console.error(e); }
     setLoading(false);
   }
 
@@ -39,10 +43,10 @@ export default function Students() {
   function openEdit(s: Student) {
     setEditing(s);
     setForm({
-      name: s.name, email: s.email, phone: s.phone,
-      parent_name: s.parent_name, parent_phone: s.parent_phone,
+      name: s.name, email: s.email || '', phone: s.phone || '',
+      parent_name: s.parent_name || '', parent_phone: s.parent_phone || '',
       class_id: s.class_id || '', dob: s.dob || '', gender: s.gender,
-      address: s.address, roll_number: s.roll_number, status: s.status,
+      address: s.address || '', roll_number: s.roll_number || '', status: s.status,
     });
     setShowModal(true);
   }
@@ -50,12 +54,14 @@ export default function Students() {
   async function handleSave() {
     if (!form.name.trim()) return;
     setSaving(true);
-    const payload = { ...form, class_id: form.class_id || null, dob: form.dob || null };
-    if (editing) {
-      await supabase.from('students').update(payload).eq('id', editing.id);
-    } else {
-      await supabase.from('students').insert(payload);
-    }
+    try {
+      const payload = { ...form, class_id: form.class_id || null, dob: form.dob || null };
+      if (editing) {
+        await api.put<ApiResponse>(`/students/${editing.id}`, payload);
+      } else {
+        await api.post<ApiResponse>('/students', payload);
+      }
+    } catch (e) { console.error(e); }
     setSaving(false);
     setShowModal(false);
     fetchAll();
@@ -63,49 +69,35 @@ export default function Students() {
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this student?')) return;
-    await supabase.from('students').delete().eq('id', id);
+    try { await api.delete<ApiResponse>(`/students/${id}`); } catch (e) { console.error(e); }
     fetchAll();
   }
 
   const filtered = students.filter(s => {
     const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.roll_number.toLowerCase().includes(search.toLowerCase());
+      (s.roll_number || '').toLowerCase().includes(search.toLowerCase());
     const matchClass = !filterClass || s.class_id === filterClass;
     return matchSearch && matchClass;
   });
 
   return (
     <div className="space-y-5">
-      {/* Top bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex gap-2 flex-1 flex-wrap">
           <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 flex-1 min-w-48">
             <Search size={16} className="text-gray-400" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search students..."
-              className="outline-none text-sm flex-1 text-gray-700"
-            />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search students..." className="outline-none text-sm flex-1 text-gray-700" />
           </div>
-          <select
-            value={filterClass}
-            onChange={e => setFilterClass(e.target.value)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none"
-          >
+          <select value={filterClass} onChange={e => setFilterClass(e.target.value)} className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none">
             <option value="">All Classes</option>
             {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
+        <button onClick={openAdd} className="flex items-center gap-2 bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
           <UserPlus size={16} /> Add Student
         </button>
       </div>
 
-      {/* Table */}
       <SectionCard title={`Students (${filtered.length})`}>
         {loading ? <LoadingSpinner /> : filtered.length === 0 ? (
           <EmptyState message="No students found" icon={Users} />
@@ -125,29 +117,19 @@ export default function Students() {
                     <td className="px-5 py-3 font-mono text-xs text-gray-500">{s.roll_number || '—'}</td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-sky-100 flex items-center justify-center text-sky-700 text-xs font-bold flex-shrink-0">
-                          {s.name.charAt(0)}
-                        </div>
+                        <div className="w-7 h-7 rounded-full bg-sky-100 flex items-center justify-center text-sky-700 text-xs font-bold flex-shrink-0">{s.name.charAt(0)}</div>
                         <span className="font-medium text-gray-800 whitespace-nowrap">{s.name}</span>
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{(s as any).classes?.name || '—'}</td>
-                    <td className="px-5 py-3">
-                      <Badge variant={s.gender === 'male' ? 'info' : 'success'}>{s.gender}</Badge>
-                    </td>
+                    <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{(s as any).class_name || '—'}</td>
+                    <td className="px-5 py-3"><Badge variant={s.gender === 'male' ? 'info' : 'success'}>{s.gender}</Badge></td>
                     <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{s.parent_name || '—'}</td>
                     <td className="px-5 py-3 text-gray-500 text-xs">{s.parent_phone || '—'}</td>
-                    <td className="px-5 py-3">
-                      <Badge variant={s.status === 'active' ? 'success' : 'danger'}>{s.status}</Badge>
-                    </td>
+                    <td className="px-5 py-3"><Badge variant={s.status === 'active' ? 'success' : 'danger'}>{s.status}</Badge></td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-sky-50 text-gray-400 hover:text-sky-600 transition-colors">
-                          <Pencil size={14} />
-                        </button>
-                        <button onClick={() => handleDelete(s.id)} className="p-1.5 rounded-lg hover:bg-rose-50 text-gray-400 hover:text-rose-500 transition-colors">
-                          <Trash2 size={14} />
-                        </button>
+                        <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-sky-50 text-gray-400 hover:text-sky-600 transition-colors"><Pencil size={14} /></button>
+                        <button onClick={() => handleDelete(s.id)} className="p-1.5 rounded-lg hover:bg-rose-50 text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
                       </div>
                     </td>
                   </tr>
@@ -158,7 +140,6 @@ export default function Students() {
         )}
       </SectionCard>
 
-      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -172,60 +153,20 @@ export default function Students() {
                   <label className="text-xs font-medium text-gray-600 block mb-1">Full Name *</label>
                   <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" placeholder="Student name" />
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Roll Number</label>
-                  <input value={form.roll_number} onChange={e => setForm({...form, roll_number: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" placeholder="GR1-001" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Class</label>
-                  <select value={form.class_id} onChange={e => setForm({...form, class_id: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200">
-                    <option value="">Select class</option>
-                    {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Gender</label>
-                  <select value={form.gender} onChange={e => setForm({...form, gender: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200">
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Date of Birth</label>
-                  <input type="date" value={form.dob} onChange={e => setForm({...form, dob: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Email</label>
-                  <input type="email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" placeholder="student@email.com" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Parent Name</label>
-                  <input value={form.parent_name} onChange={e => setForm({...form, parent_name: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" placeholder="Parent/Guardian" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Parent Phone</label>
-                  <input value={form.parent_phone} onChange={e => setForm({...form, parent_phone: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" placeholder="+1-555-0000" />
-                </div>
-                <div className="col-span-2">
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Address</label>
-                  <textarea value={form.address} onChange={e => setForm({...form, address: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200 resize-none" rows={2} placeholder="Home address" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1">Status</label>
-                  <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200">
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                    <option value="alumni">Alumni</option>
-                  </select>
-                </div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Roll Number</label><input value={form.roll_number} onChange={e => setForm({...form, roll_number: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-200" /></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Class</label><select value={form.class_id} onChange={e => setForm({...form, class_id: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"><option value="">Select class</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Gender</label><select value={form.gender} onChange={e => setForm({...form, gender: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Date of Birth</label><input type="date" value={form.dob} onChange={e => setForm({...form, dob: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none" /></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Email</label><input type="email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none" /></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Parent Name</label><input value={form.parent_name} onChange={e => setForm({...form, parent_name: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none" /></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Parent Phone</label><input value={form.parent_phone} onChange={e => setForm({...form, parent_phone: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none" /></div>
+                <div className="col-span-2"><label className="text-xs font-medium text-gray-600 block mb-1">Address</label><textarea value={form.address} onChange={e => setForm({...form, address: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none resize-none" rows={2} /></div>
+                <div><label className="text-xs font-medium text-gray-600 block mb-1">Status</label><select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
               </div>
             </div>
             <div className="flex justify-end gap-2 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">Cancel</button>
-              <button onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors disabled:opacity-60 font-medium">
-                {saving ? 'Saving...' : editing ? 'Update' : 'Add Student'}
-              </button>
+              <button onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors disabled:opacity-60 font-medium">{saving ? 'Saving...' : editing ? 'Update' : 'Add Student'}</button>
             </div>
           </div>
         </div>

@@ -1,41 +1,40 @@
 import { Request, Response } from 'express';
-import { supabase } from '../config/db';
+import { db } from '../config/db';
 import { sendSuccess } from '../utils/response';
 import { ApiError, asyncHandler } from '../../middleware/error';
 
 export const getSystemDashboard = asyncHandler(async (req: Request, res: Response) => {
-  const [userStats, schoolStats, recentLogins] = await Promise.all([
-    supabase.from('users').select('role, is_active'),
-    supabase.from('students').select('id', { count: 'exact', head: true }),
-    supabase.from('users').select('email, last_login').order('last_login', { ascending: false }).limit(10),
+  const [userStats, studentCount, recentLogins] = await Promise.all([
+    db.query(`SELECT role, is_active FROM users`),
+    db.queryOne(`SELECT COUNT(*) as count FROM students`),
+    db.query(`SELECT email, last_login FROM users ORDER BY last_login DESC LIMIT 10`),
   ]);
 
-  const users = userStats.data || [];
-  const byRole = {
-    super_admin: users.filter(u => u.role === 'super_admin').length,
-    admin: users.filter(u => u.role === 'admin').length,
-    staff: users.filter(u => u.role === 'staff').length,
-    student: users.filter(u => u.role === 'student').length,
-    parent: users.filter(u => u.role === 'parent').length,
-  };
+  const byRole: Record<string, number> = {};
+  let active = 0;
+  userStats.forEach((u: any) => {
+    byRole[u.role] = (byRole[u.role] || 0) + 1;
+    if (u.is_active) active++;
+  });
 
   sendSuccess(res, {
-    users: { total: users.length, active: users.filter(u => u.is_active).length, byRole },
-    school: { totalStudents: schoolStats.count || 0 },
-    recentLogins: recentLogins.data,
+    users: { total: userStats.length, active, byRole },
+    school: { totalStudents: (studentCount as any)?.count || 0 },
+    recentLogins,
   }, 'System dashboard retrieved');
 });
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
   const { role, status } = req.query;
-  let query = supabase.from('users').select('*, user_profiles(name, phone, avatar_url), admin_users(*), staff_users(*), student_users(*), parent_users(*)').order('created_at', { ascending: false });
+  let sql = `SELECT u.id, u.email, u.role, u.is_active, u.is_verified, u.last_login, u.created_at, p.name, p.phone, p.avatar_url FROM users u LEFT JOIN user_profiles p ON u.id = p.user_id WHERE 1=1`;
+  const params: any[] = [];
 
-  if (role) query = query.eq('role', role);
-  if (status === 'active') query = query.eq('is_active', true);
-  if (status === 'inactive') query = query.eq('is_active', false);
+  if (role) { sql += ` AND u.role = ?`; params.push(role); }
+  if (status === 'active') { sql += ` AND u.is_active = true`; }
+  if (status === 'inactive') { sql += ` AND u.is_active = false`; }
+  sql += ` ORDER BY u.created_at DESC`;
 
-  const { data, error } = await query;
-  if (error) throw new ApiError(400, error.message);
+  const data = await db.query(sql, params);
   sendSuccess(res, data, 'Users retrieved');
 });
 
@@ -43,17 +42,15 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const { email, password, role, name, phone } = req.body;
   if (!email || !password || !role || !name) throw new ApiError(400, 'Email, password, role, and name are required');
 
-  const { data: user, error: userError } = await supabase.from('users').insert({
-    email, password_hash: password, role, is_active: true, is_verified: true,
-  }).select().single();
+  const existing = await db.queryOne(`SELECT id FROM users WHERE email = ?`, [email]);
+  if (existing) throw new ApiError(400, 'Email already exists');
 
-  if (userError) throw new ApiError(400, userError.message);
+  const result = await db.insert(`INSERT INTO users (id, email, password_hash, role, is_active, is_verified) VALUES (UUID(), ?, ?, ?, true, true)`, [email, password, role]);
 
-  const { error: profileError } = await supabase.from('user_profiles').insert({
-    user_id: user.id, name, phone: phone || '',
-  });
-
-  if (profileError) throw new ApiError(400, profileError.message);
+  const user = await db.queryOne(`SELECT * FROM users WHERE id = ?`, [result.insertId]);
+  if (user!.id) {
+    await db.insert(`INSERT INTO user_profiles (id, user_id, name, phone) VALUES (UUID(), ?, ?, ?)`, [user!.id, name, phone || '']);
+  }
 
   sendSuccess(res, user, 'User created', 201);
 });
@@ -62,21 +59,19 @@ export const updateUserRole = asyncHandler(async (req: Request, res: Response) =
   const { userId } = req.params;
   const { role, is_active, is_verified } = req.body;
 
-  const { data, error } = await supabase.from('users').update({ role, is_active, is_verified }).eq('id', userId).select().single();
-  if (error) throw new ApiError(400, error.message);
-  sendSuccess(res, data, 'User updated');
+  await db.update(`UPDATE users SET role = ?, is_active = ?, is_verified = ? WHERE id = ?`, [role, is_active, is_verified, userId]);
+  const user = await db.queryOne(`SELECT * FROM users WHERE id = ?`, [userId]);
+  sendSuccess(res, user, 'User updated');
 });
 
 export const deleteUser = asyncHandler(async (req: Request, res: Response) => {
   const { userId } = req.params;
-  const { error } = await supabase.from('users').delete().eq('id', userId);
-  if (error) throw new ApiError(400, error.message);
+  await db.delete(`DELETE FROM users WHERE id = ?`, [userId]);
   sendSuccess(res, { id: userId }, 'User deleted');
 });
 
 export const getPermissions = asyncHandler(async (req: Request, res: Response) => {
-  const { data, error } = await supabase.from('permissions').select('*').order('role');
-  if (error) throw new ApiError(400, error.message);
+  const data = await db.query(`SELECT * FROM permissions ORDER BY role`);
   sendSuccess(res, data, 'Permissions retrieved');
 });
 
@@ -84,9 +79,9 @@ export const updatePermission = asyncHandler(async (req: Request, res: Response)
   const { permissionId } = req.params;
   const { allowed } = req.body;
 
-  const { data, error } = await supabase.from('permissions').update({ allowed }).eq('id', permissionId).select().single();
-  if (error) throw new ApiError(400, error.message);
-  sendSuccess(res, data, 'Permission updated');
+  await db.update(`UPDATE permissions SET allowed = ? WHERE id = ?`, [allowed, permissionId]);
+  const perm = await db.queryOne(`SELECT * FROM permissions WHERE id = ?`, [permissionId]);
+  sendSuccess(res, perm, 'Permission updated');
 });
 
 export const resetUserPassword = asyncHandler(async (req: Request, res: Response) => {
@@ -94,7 +89,6 @@ export const resetUserPassword = asyncHandler(async (req: Request, res: Response
   const { newPassword } = req.body;
   if (!newPassword) throw new ApiError(400, 'New password is required');
 
-  const { error } = await supabase.from('users').update({ password_hash: newPassword }).eq('id', userId);
-  if (error) throw new ApiError(400, error.message);
+  await db.update(`UPDATE users SET password_hash = ? WHERE id = ?`, [newPassword, userId]);
   sendSuccess(res, {}, 'Password reset successfully');
 });

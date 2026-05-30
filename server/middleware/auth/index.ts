@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabase } from '../config/db';
+import { db } from '../config/db';
 import { ApiError } from './error';
 
 declare global {
@@ -23,21 +23,15 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     }
 
     const token = authHeader.split(' ')[1];
-    // For demo, token is user_id. In production, use JWT verification
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, role, user_profiles(id)')
-      .eq('id', token)
-      .eq('is_active', true)
-      .single();
+    const user = await db.queryOne(`SELECT u.id, u.email, u.role, p.id as profile_id FROM users u LEFT JOIN user_profiles p ON u.id = p.user_id WHERE u.id = ? AND u.is_active = true`, [token]);
 
-    if (error || !user) throw new ApiError(401, 'Invalid token');
+    if (!user) throw new ApiError(401, 'Invalid token');
 
     req.user = {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      profileId: (user.user_profiles as any)?.id,
+      id: user.id as string,
+      email: user.email as string,
+      role: user.role as string,
+      profileId: user.profile_id as string,
     };
     next();
   } catch (err) {
@@ -56,19 +50,9 @@ export const authorize = (...allowedRoles: string[]) => {
 export const checkPermission = (resource: string, action: string) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) throw new ApiError(401, 'Not authenticated');
-
-    const { data: permission } = await supabase
-      .from('permissions')
-      .select('*')
-      .eq('role', req.user.role)
-      .eq('resource', resource)
-      .eq('action', action)
-      .eq('allowed', true)
-      .single();
-
-    // Super admin has all access
     if (req.user.role === 'super_admin') return next();
 
+    const permission = await db.queryOne(`SELECT * FROM permissions WHERE role = ? AND resource = ? AND action = ? AND allowed = true`, [req.user.role, resource, action]);
     if (!permission) throw new ApiError(403, `No permission to ${action} ${resource}`);
     next();
   };

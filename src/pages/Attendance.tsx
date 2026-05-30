@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, Clock, ClipboardCheck } from 'lucide-react';
-import { supabase, type Student, type Class } from '../lib/supabase';
+import { api, type Student, type Class } from '../lib/supabase';
 import { Badge, LoadingSpinner, EmptyState, SectionCard } from '../components/ui';
 
 type AttendanceRecord = { student_id: string; status: 'present' | 'absent' | 'late' };
@@ -16,7 +16,7 @@ export default function Attendance() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    supabase.from('classes').select('*').order('grade').then(({ data }) => setClasses(data || []));
+    api.get('/classes').then((res: any) => setClasses(res.data || []));
   }, []);
 
   useEffect(() => {
@@ -26,14 +26,14 @@ export default function Attendance() {
   async function loadClassStudents() {
     setLoading(true);
     const [sRes, aRes] = await Promise.all([
-      supabase.from('students').select('*').eq('class_id', selectedClass).eq('status', 'active').order('name'),
-      supabase.from('attendance').select('student_id, status').eq('date', selectedDate),
+      api.get(`/students?class_id=${selectedClass}&status=active`),
+      api.get(`/attendance?date=${selectedDate}`),
     ]);
     const studentsData = (sRes.data || []) as Student[];
     const attendanceData = aRes.data || [];
     setStudents(studentsData);
     const recs: AttendanceRecord[] = studentsData.map(s => {
-      const existing = attendanceData.find(a => a.student_id === s.id);
+      const existing = attendanceData.find((a: any) => a.student_id === s.id);
       return { student_id: s.id, status: (existing?.status as 'present' | 'absent' | 'late') || 'present' };
     });
     setRecords(recs);
@@ -51,7 +51,7 @@ export default function Attendance() {
   async function handleSave() {
     setSaving(true);
     const rows = records.map(r => ({ student_id: r.student_id, date: selectedDate, status: r.status }));
-    await supabase.from('attendance').upsert(rows, { onConflict: 'student_id,date' });
+    await api.post('/attendance/bulk', { records: rows });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
