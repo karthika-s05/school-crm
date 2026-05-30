@@ -1,44 +1,69 @@
 import { useEffect, useState } from 'react';
-import { Plus, X, Calendar } from 'lucide-react';
-import { api, type TimetableEntry, type Class, type Teacher } from '../lib/supabase';
-import { LoadingSpinner, SectionCard } from '../components/ui';
+import { Calendar, Plus, Clock, User, BookOpen } from 'lucide-react';
+import { api } from '../lib/supabase';
+import {
+  PageHeader, LoadingSpinner, EmptyState,
+  SelectInput, Button, Modal, ModalFooter, FormInput, FormSelect, Card
+} from '../components/ui';
 
 type ApiResponse = { success: boolean; data: any };
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
-const PERIOD_TIMES = ['08:00–08:45', '08:45–09:30', '09:30–10:15', '10:30–11:15', '11:15–12:00', '12:00–12:45', '13:30–14:15', '14:15–15:00'];
+const PERIOD_TIMES = [
+  '08:00 - 08:45', '08:45 - 09:30', '09:30 - 10:15', '10:30 - 11:15',
+  '11:15 - 12:00', '12:00 - 12:45', '13:30 - 14:15', '14:15 - 15:00'
+];
 
 export default function Timetable() {
   const [entries, setEntries] = useState<any[]>([]);
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [teachers, setTeachers] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ day_of_week: 'Monday', period_number: '1', subject: '', teacher_id: '', start_time: '08:00', end_time: '08:45' });
+  const [form, setForm] = useState({
+    day_of_week: 'Monday', period_number: '1', subject: '', teacher_id: '',
+    start_time: '08:00', end_time: '08:45',
+  });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.get<ApiResponse>('/classes'), api.get<ApiResponse>('/teachers')]).then(([cRes, tRes]) => {
+    Promise.all([
+      api.get<ApiResponse>('/classes'),
+      api.get<ApiResponse>('/teachers'),
+    ]).then(([cRes, tRes]) => {
       setClasses(cRes.data || []);
       setTeachers(tRes.data || []);
     });
   }, []);
 
-  useEffect(() => { if (selectedClass) loadEntries(); }, [selectedClass]);
+  useEffect(() => {
+    if (selectedClass) loadEntries();
+  }, [selectedClass]);
 
   async function loadEntries() {
     setLoading(true);
-    const res = await api.get<ApiResponse>(`/timetable/class/${selectedClass}`);
-    setEntries(res.data || []);
+    try {
+      const res = await api.get<ApiResponse>(`/timetable/class/${selectedClass}`);
+      setEntries(res.data || []);
+    } catch (e) { console.error(e); }
     setLoading(false);
   }
 
   async function handleSave() {
+    if (!form.subject.trim()) return;
     setSaving(true);
-    await api.post<ApiResponse>('/timetable', { ...form, class_id: selectedClass, period_number: parseInt(form.period_number) });
-    setSaving(false); setShowModal(false); loadEntries();
+    try {
+      await api.post<ApiResponse>('/timetable', {
+        ...form,
+        class_id: selectedClass,
+        period_number: parseInt(form.period_number),
+      });
+    } catch (e) { console.error(e); }
+    setSaving(false);
+    setShowModal(false);
+    loadEntries();
   }
 
   function getEntry(day: string, period: number) {
@@ -46,67 +71,150 @@ export default function Timetable() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-3 items-center">
-        <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none">
-          <option value="">Select Class</option>
-          {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {selectedClass && <button onClick={() => { setForm({ day_of_week: 'Monday', period_number: '1', subject: '', teacher_id: '', start_time: '08:00', end_time: '08:45' }); setShowModal(true); }} className="flex items-center gap-2 bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-medium"><Plus size={16} /> Add Period</button>}
+    <div className="space-y-6">
+      <PageHeader
+        title="Timetable"
+        subtitle="Manage class schedules and periods"
+      />
+
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div className="flex gap-3 items-center">
+          <SelectInput
+            value={selectedClass}
+            onChange={setSelectedClass}
+            options={classes.map(c => ({ value: c.id, label: c.name }))}
+            placeholder="Select Class"
+            className="w-48"
+          />
+          {selectedClass && (
+            <Button
+              icon={Plus}
+              onClick={() => {
+                setForm({
+                  day_of_week: 'Monday', period_number: '1', subject: '',
+                  teacher_id: '', start_time: '08:00', end_time: '08:45',
+                });
+                setShowModal(true);
+              }}
+            >
+              Add Period
+            </Button>
+          )}
+        </div>
       </div>
 
-      {loading ? <LoadingSpinner /> : !selectedClass ? (
-        <div className="bg-white rounded-2xl border p-12 text-center"><Calendar size={48} className="text-gray-200 mx-auto mb-3" /><p className="text-gray-400">Select a class to view timetable</p></div>
+      {!selectedClass ? (
+        <EmptyState message="Select a class to view timetable" icon={Calendar} />
+      ) : loading ? (
+        <LoadingSpinner />
       ) : (
-        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500 w-24">Period</th>
-                {DAYS.map(d => <th key={d} className="px-4 py-3 text-xs font-semibold text-gray-500">{d}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {PERIODS.map((p, i) => (
-                <tr key={p} className="border-t border-gray-100">
-                  <td className="px-4 py-3 text-xs text-gray-500"><div className="font-medium">{p}</div><div className="text-gray-300">{PERIOD_TIMES[i]}</div></td>
-                  {DAYS.map(d => {
-                    const entry = getEntry(d, p);
-                    return (
-                      <td key={`${d}-${p}`} className="px-4 py-3 border-l border-gray-50">
-                        {entry ? <div className="bg-sky-50 rounded-lg p-2"><p className="text-xs font-medium text-sky-700">{entry.subject}</p><p className="text-xs text-gray-400">{entry.teacher_name}</p></div> : <div className="text-gray-200 text-xs">-</div>}
-                      </td>
-                    );
-                  })}
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">
+                    <div className="flex flex-col">
+                      <span>Period</span>
+                      <span className="text-gray-300 font-normal normal-case">Time</span>
+                    </div>
+                  </th>
+                  {DAYS.map(day => (
+                    <th key={day} className="px-4 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      {day}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {PERIODS.map((period, i) => (
+                  <tr key={period} className="border-b border-gray-50 hover:bg-gray-50/50">
+                    <td className="px-4 py-3 bg-gray-50/50">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-gray-700">Period {period}</span>
+                        <span className="text-xs text-gray-400">{PERIOD_TIMES[i]}</span>
+                      </div>
+                    </td>
+                    {DAYS.map(day => {
+                      const entry = getEntry(day, period);
+                      return (
+                        <td key={`${day}-${period}`} className="px-4 py-3 border-l border-gray-50">
+                          {entry ? (
+                            <div className="bg-sky-50 rounded-lg p-3 min-h-[60px]">
+                              <p className="font-medium text-sky-700 text-sm">{entry.subject}</p>
+                              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                                <User size={10} />
+                                {entry.teacher_name || 'No teacher'}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="text-gray-200 text-xs py-4 text-center">-</div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h3 className="font-semibold">Add Period</h3>
-              <button onClick={() => setShowModal(false)} className="p-1 rounded hover:bg-gray-100"><X size={18} /></button>
-            </div>
-            <div className="p-6 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-medium block mb-1">Day</label><select value={form.day_of_week} onChange={e => setForm({...form, day_of_week: e.target.value})} className="w-full border rounded-lg px-3 py-2 text-sm">{DAYS.map(d => <option key={d} value={d}>{d}</option>)}</select></div>
-                <div><label className="text-xs font-medium block mb-1">Period</label><select value={form.period_number} onChange={e => setForm({...form, period_number: e.target.value})} className="w-full border rounded-lg px-3 py-2 text-sm">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-              </div>
-              <div><label className="text-xs font-medium block mb-1">Subject</label><input value={form.subject} onChange={e => setForm({...form, subject: e.target.value})} className="w-full border rounded-lg px-3 py-2 text-sm" /></div>
-              <div><label className="text-xs font-medium block mb-1">Teacher</label><select value={form.teacher_id} onChange={e => setForm({...form, teacher_id: e.target.value})} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Select</option>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-            </div>
-            <div className="flex justify-end gap-2 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">Cancel</button>
-              <button onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-sky-500 text-white rounded-lg disabled:opacity-60">{saving ? 'Saving...' : 'Add'}</button>
-            </div>
+      <Modal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        title="Add Period to Timetable"
+      >
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <FormSelect
+              label="Day"
+              value={form.day_of_week}
+              onChange={(v) => setForm({ ...form, day_of_week: v })}
+              options={DAYS.map(d => ({ value: d, label: d }))}
+            />
+            <FormSelect
+              label="Period"
+              value={form.period_number}
+              onChange={(v) => setForm({ ...form, period_number: v })}
+              options={PERIODS.map(p => ({ value: String(p), label: `Period ${p}` }))}
+            />
+          </div>
+          <FormInput
+            label="Subject"
+            value={form.subject}
+            onChange={(v) => setForm({ ...form, subject: v })}
+            required
+            placeholder="e.g., Mathematics"
+          />
+          <FormSelect
+            label="Teacher"
+            value={form.teacher_id}
+            onChange={(v) => setForm({ ...form, teacher_id: v })}
+            options={teachers.map(t => ({ value: t.id, label: t.name }))}
+            placeholder="Select teacher"
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <FormInput
+              label="Start Time"
+              type="time"
+              value={form.start_time}
+              onChange={(v) => setForm({ ...form, start_time: v })}
+            />
+            <FormInput
+              label="End Time"
+              type="time"
+              value={form.end_time}
+              onChange={(v) => setForm({ ...form, end_time: v })}
+            />
           </div>
         </div>
-      )}
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+          <Button onClick={handleSave} loading={saving}>Add Period</Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }

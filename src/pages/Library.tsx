@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Search, Plus, X, Library as LibraryIcon, BookOpen } from 'lucide-react';
+import { BookOpen, Search, Library as LibraryIcon, User, Calendar, ArrowRight } from 'lucide-react';
 import { api } from '../lib/supabase';
-import { Badge, LoadingSpinner, EmptyState, SectionCard } from '../components/ui';
+import {
+  PageHeader, SectionCard, Badge, LoadingSpinner, EmptyState,
+  SearchInput, Tabs, Card, Avatar
+} from '../components/ui';
 
 type ApiResponse = { success: boolean; data: any };
 
 export default function Library() {
   const [books, setBooks] = useState<any[]>([]);
   const [issues, setIssues] = useState<any[]>([]);
-  const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'books' | 'issues'>('books');
   const [search, setSearch] = useState('');
@@ -18,56 +20,119 @@ export default function Library() {
   async function fetchAll() {
     setLoading(true);
     try {
-      const [bRes, iRes, sRes] = await Promise.all([api.get<ApiResponse>('/library'), api.get<ApiResponse>('/library/issues'), api.get<ApiResponse>('/students')]);
+      const [bRes, iRes] = await Promise.all([
+        api.get<ApiResponse>('/library'),
+        api.get<ApiResponse>('/library/issues'),
+      ]);
       setBooks(bRes.data || []);
       setIssues(iRes.data || []);
-      setStudents(sRes.data || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   }
 
-  const filteredBooks = books.filter(b => b.title.toLowerCase().includes(search.toLowerCase()));
+  const filteredBooks = books.filter(b =>
+    b.title.toLowerCase().includes(search.toLowerCase()) ||
+    (b.author || '').toLowerCase().includes(search.toLowerCase())
+  );
 
-  if (loading) return <LoadingSpinner />;
+  const availableCount = books.filter(b => b.available_copies > 0).length;
+  const issuedCount = issues.filter(i => i.status === 'issued').length;
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-3 items-center">
-        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 flex-1 max-w-sm">
-          <Search size={16} className="text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search books..." className="outline-none text-sm" />
-        </div>
-        <div className="flex bg-gray-100 rounded-lg p-1">
-          <button onClick={() => setTab('books')} className={`px-4 py-1.5 text-sm rounded-md ${tab === 'books' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}>Books</button>
-          <button onClick={() => setTab('issues')} className={`px-4 py-1.5 text-sm rounded-md ${tab === 'issues' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}>Issues</button>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Library"
+        subtitle={`${books.length} books, ${issuedCount} currently issued`}
+      />
+
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search books by title or author..."
+          className="max-w-sm"
+        />
+        <Tabs
+          tabs={[
+            { id: 'books', label: 'Books' },
+            { id: 'issues', label: 'Issued Books' },
+          ]}
+          activeTab={tab}
+          onChange={(id) => setTab(id as 'books' | 'issues')}
+        />
       </div>
 
-      {tab === 'books' ? (
-        filteredBooks.length === 0 ? <EmptyState message="No books found" icon={BookOpen} /> : (
+      {loading ? (
+        <LoadingSpinner />
+      ) : tab === 'books' ? (
+        filteredBooks.length === 0 ? (
+          <EmptyState message="No books found" icon={BookOpen} />
+        ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredBooks.map(b => (
-              <div key={b.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center mb-3"><BookOpen size={20} className="text-amber-600" /></div>
-                <h4 className="font-semibold text-gray-900 text-sm">{b.title}</h4>
-                <p className="text-xs text-gray-500">{b.author}</p>
-                <p className="text-xs text-gray-400 mt-1">{b.category}</p>
-                <div className="mt-3 pt-3 border-t border-gray-50 flex justify-between text-xs">
-                  <span className="text-gray-400">Available: {b.available_copies}/{b.total_copies}</span>
-                  <Badge variant={b.available_copies > 0 ? 'success' : 'danger'}>{b.available_copies > 0 ? 'Available' : 'Issued'}</Badge>
+            {filteredBooks.map(book => (
+              <Card key={book.id} className="p-5" hover>
+                <div className="flex items-start gap-4">
+                  <div className="w-14 h-14 rounded-xl bg-amber-50 flex items-center justify-center flex-shrink-0">
+                    <BookOpen size={24} className="text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900 text-sm truncate">{book.title}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{book.author || 'Unknown Author'}</p>
+                    <p className="text-xs text-gray-400 mt-1">{book.category || 'General'}</p>
+                  </div>
                 </div>
-              </div>
+
+                <div className="mt-4 pt-4 border-t border-gray-50 flex items-center justify-between">
+                  <div className="text-sm">
+                    <span className="text-gray-500">Available: </span>
+                    <span className={`font-medium ${book.available_copies > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {book.available_copies}/{book.total_copies}
+                    </span>
+                  </div>
+                  <Badge variant={book.available_copies > 0 ? 'success' : 'danger'} size="sm">
+                    {book.available_copies > 0 ? 'Available' : 'Issued'}
+                  </Badge>
+                </div>
+
+                {book.isbn && (
+                  <p className="text-xs text-gray-400 mt-2">ISBN: {book.isbn}</p>
+                )}
+              </Card>
             ))}
           </div>
         )
       ) : (
-        <SectionCard title="Issued Books">
-          {issues.length === 0 ? <EmptyState message="No issued books" icon={LibraryIcon} /> : (
-            <div className="space-y-2">
-              {issues.map(i => (
-                <div key={i.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                  <div><p className="font-medium text-sm">{i.book_title || i.book_id}</p><p className="text-xs text-gray-400">{i.student_name || i.student_id}</p></div>
-                  <div className="text-right"><Badge variant={i.status === 'issued' ? 'warning' : 'success'}>{i.status}</Badge><p className="text-xs text-gray-400 mt-1">Due: {i.due_date}</p></div>
+        <SectionCard title={`Issued Books (${issues.length})`}>
+          {issues.length === 0 ? (
+            <EmptyState message="No books currently issued" icon={LibraryIcon} />
+          ) : (
+            <div className="space-y-3">
+              {issues.map(issue => (
+                <div
+                  key={issue.id}
+                  className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+                      <BookOpen size={18} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-900">{issue.book_title || 'Unknown Book'}</p>
+                      <p className="text-xs text-gray-500 flex items-center gap-1">
+                        <User size={10} />
+                        {issue.student_name || 'Unknown Student'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <Badge variant={issue.status === 'issued' ? 'warning' : 'success'}>
+                      {issue.status}
+                    </Badge>
+                    <p className="text-xs text-gray-400 mt-1 flex items-center gap-1 justify-end">
+                      <Calendar size={10} />
+                      Due: {issue.due_date}
+                    </p>
+                  </div>
                 </div>
               ))}
             </div>
